@@ -47,6 +47,7 @@ class Image:
 
         self.feature_matrix = b_1
 
+    # calculate distance between two points on the same image
     def calculate_physical_image_distance(self, point1, point2):
         p1 = np.array([point1.x, point1.y])
         p2 = np.array([point2.x, point2.y])
@@ -56,17 +57,25 @@ class Image:
         b_1 = np.asmatrix(b)
         return sp.spatial.distance.cdist(a_1, b_1, 'euclidean')
 
+    # find pairs within given cohesion factor
     def cohesion_pairs(self, k, factor):
         consistent_pairs = []
 
+        # matrix for both images with distances
+        # between their own point from pairs
         image_1_matrix, image_2_matrix = self.pairs_distance_matrix()
 
         for i in range(0, len(self.pairs)):
+            # list with k nearest pairs for both images
+            # indexes are kept and are the same as self.pairs
             neighbourhood_image_1 = self.find_pair_point_neighbourhood(k, image_1_matrix[:, i])
             neighbourhood_image_2 = self.find_pair_point_neighbourhood(k, image_2_matrix[:, i])
 
+            # common part of both nearest lists for images
             pairs_random_in_range = list(set(neighbourhood_image_1).intersection(neighbourhood_image_2))
 
+            # factor of cohesion is counted from div between
+            # common nearest pairs and all k pairs checked
             consistent_factor = len(pairs_random_in_range) / k
 
             if consistent_factor > factor:
@@ -76,9 +85,12 @@ class Image:
         print("After cohesion: ")
         print(len(self.pairs))
 
+    # find indexes of k smallest values
     def find_pair_point_neighbourhood(self, k, values):
         return list(np.argpartition(values, k)[:k])
 
+    # calculate distance between points on the same image
+    # points are given from pairs
     def pairs_distance_matrix(self):
         image_1_crd = []
         image_2_crd = []
@@ -96,14 +108,23 @@ class Image:
         return sp.spatial.distance.cdist(image_1_crd_matrix, image_1_crd_matrix, 'euclidean'), \
                sp.spatial.distance.cdist(image_2_crd_matrix, image_2_crd_matrix, 'euclidean')
 
+    # count distance between all features vectors
+    # for both images
     def distance_fast_all(self, image):
         self.distances_to_another_image = sp.spatial.distance.cdist(self.feature_matrix, image.feature_matrix,
                                                                     'euclidean')
 
+    # quick find pairs between points
+    # according to feature matirix and given k
+    # k = 1 will give nearest neighbour
     def find_pairs_quick_k(self, image, k):
         x = copy.deepcopy(self.distances_to_another_image)
+        # cut features matrix to get k minimum values
+        # for image_1 from rows
         min_dist_image_1 = np.argpartition(x, k, axis=0)
         min_dist_image_1 = min_dist_image_1[:k]
+        # cut features matrix to get k minimum values
+        # for image_2 from columns
         min_dist_image_2 = np.argpartition(x, k, axis=1)
         min_dist_image_2 = min_dist_image_2[:, :k]
 
@@ -113,16 +134,15 @@ class Image:
             for b in range(0, k):
                 img2 = min_dist_image_2[img1[b]]
                 if i in img2[:]:
+                    # add the pair to the list
+                    # if nearest is symmetrical relation
                     self.pairs.append(Pair.Pair(self.points[i],
                                                 image.points[img1[b]],
                                                 self.distances_to_another_image[img1[b]][i]))
         print(self.pairs)
         print(len(self.pairs))
 
-    def draw_all_pairs(self, image1, image2):
-        for p in self.pairs:
-            p.visualize_pair(image1, image2)
-
+    # affine transformation
     def affine_transformation(self, chosen_pairs):
         X = np.array([[chosen_pairs[0].point1.x, chosen_pairs[0].point1.y, 1, 0, 0, 0],
                       [chosen_pairs[1].point1.x, chosen_pairs[1].point1.y, 1, 0, 0, 0],
@@ -152,6 +172,7 @@ class Image:
 
             return Z
 
+    # perspective transformation
     def perspective_transformation(self, chosen_pairs):
         X = np.array([[chosen_pairs[0].point1.x, chosen_pairs[0].point1.y, 1, 0, 0, 0,
                        -(chosen_pairs[0].point2.x * chosen_pairs[0].point1.x),
@@ -201,6 +222,7 @@ class Image:
 
             return Z
 
+    # choose transformation type
     def transformation(self, method, chosen_pairs):
         if method == "perspective":
             return self.perspective_transformation(chosen_pairs)
@@ -209,10 +231,14 @@ class Image:
 
     def ransac(self, method, error, min_val, max_val, iteration_value):
 
+        # choose method
         chosen_pairs_number = 3
         if method == "perspective":
             chosen_pairs_number = 4
 
+        # get coordinates for all points in pairs
+        # image.point1 belongs to image1
+        # image.point2 belongs to image2
         points_coordinates_image_1 = []
         points_coordinates_image_2 = []
 
@@ -226,53 +252,70 @@ class Image:
             image_2_matrix = np.asmatrix(image_2)
             points_coordinates_image_2.append(image_2_matrix)
 
-        chosen_pairs = random.sample(self.pairs, chosen_pairs_number)
+        # choose initial random ransac sample
+        if len(self.pairs) >= chosen_pairs_number:
+            chosen_pairs = random.sample(self.pairs, chosen_pairs_number)
 
-        best_model = np.matrix
-        best_model_score = 0
-        final_pairs = []
+            best_model = np.matrix
+            best_model_score = 0
+            final_pairs = []
 
-        for i in range(0, iteration_value):
-            model = self.transformation(method, chosen_pairs)
-            model_coordinates_for_best_model = []
-            score = 0
-            pairs_from_model = []
+            # iteration within given range
+            for i in range(0, iteration_value):
+                # calculate current model
+                model = self.transformation(method, chosen_pairs)
 
-            for point in points_coordinates_image_1:
-                model_coordinates_for_best_model.append(np.transpose(np.dot(model, point)))
+                model_coordinates_for_best_model = []
+                score = 0
+                pairs_from_model = []
 
-            for p in range(0, len(self.pairs)):
-                c_1 = model_coordinates_for_best_model[p]
-                c_2 = points_coordinates_image_2[p]
-                dist = scipy.spatial.distance.cdist(c_1, c_2, 'euclidean')
-                if dist.item(0) < error:
-                    score += 1
-                    pairs_from_model.append(self.pairs[p])
+                # count all coordinates according to current model
+                for point in points_coordinates_image_1:
+                    model_coordinates_for_best_model.append(np.transpose(np.dot(model, point)))
 
-            if score > best_model_score:
-                best_model = model
-                best_model_score = score
-                final_pairs = pairs_from_model
+                # count distance between point on image 2
+                # and point calculated from model
+                for p in range(0, len(self.pairs)):
+                    c_1 = model_coordinates_for_best_model[p]
+                    c_2 = points_coordinates_image_2[p]
+                    dist = scipy.spatial.distance.cdist(c_1, c_2, 'euclidean')
+                    if dist.item(0) < error:
+                        score += 1
+                        pairs_from_model.append(self.pairs[p])
 
-            chosen_pairs = self.chose_new_set(min_val, max_val, chosen_pairs)
+                # if model is better, replace data
+                if score > best_model_score:
+                    best_model = model
+                    best_model_score = score
+                    final_pairs = pairs_from_model
 
-        print(best_model_score)
-        print(best_model)
+                # find new set of pairs
+                chosen_pairs = self.chose_new_set(min_val, max_val, chosen_pairs)
 
-        self.pairs = final_pairs
+            print(best_model_score)
+            print(best_model)
+
+            # change pairs to final post-ransac set
+            self.pairs = final_pairs
+        else:
+            print("Wrong pairs set!")
 
     def chose_new_set(self, min_val, max_val, previously_chosen):
         new_set = []
 
+        # find replacement for all previously counted pairs
         for p in previously_chosen:
             unique_added = True
             while unique_added:
+                # get random pair
                 pair = random.choice(self.pairs)
 
+                # check if is in given distance between the old one
                 if min_val < self.calculate_physical_image_distance(p.point1, pair.point1) < max_val \
                         and min_val < self.calculate_physical_image_distance(p.point2, pair.point2) < max_val:
                     new_set.append(pair)
 
+                # chceck if you did not append the same pair twice
                 list_size_prev = len(new_set)
                 new_set = list(set(new_set))
                 list_size_after = len(new_set)
